@@ -1,4 +1,3 @@
-from logging import root
 import os
 import httpx
 from typing import Optional, Literal
@@ -399,11 +398,15 @@ seeking both historical gravitas and intrinsic precious metal value."
 Remember: You're not just describing a coin—you're revealing its STORY and creating 
 an emotional connection between the collector and history itself.
 """
+
+# =============================================================================
+# 1. DEFINE WORKER AGENTS (Sub-agents for Research)
+# =============================================================================
+
 # SUB-AGENT 1: Numista API Research Agent
-numista_research_agent = Agent(
+numista_research_agent = LlmAgent(
     name="numista_researcher",
     model="gemini-2.5-flash",
-    description="Searches and retrieves technical numismatic data from Numista API.",
     instruction="""You are a numismatic data specialist. Use the available tools to:
 1. Search for coins in the Numista database
 2. Retrieve detailed technical specifications for coins
@@ -417,13 +420,13 @@ Provide detailed, accurate technical data about coins.""",
         get_coin_pricing,
         search_roman_coins,
     ],
+    output_key="numista_data"
 )
 
 # SUB-AGENT 2: Wikipedia Research Agent
-wikipedia_research_agent = Agent(
+wikipedia_research_agent = LlmAgent(
     name="wikipedia_researcher",
     model="gemini-2.5-flash",
-    description="Searches Wikipedia for historical context and background information.",
     instruction="""You are a historical research specialist. Use Wikipedia to:
 1. Search for articles about historical figures, periods, and events
 2. Retrieve background information and context
@@ -442,13 +445,13 @@ Focus on providing rich historical context and background.""",
             ),
         )
     ],
+    output_key="wikipedia_data"
 )
 
 # SUB-AGENT 3: Google Search Research Agent
-google_research_agent = Agent(
+google_research_agent = LlmAgent(
     name="google_researcher",
-    model="gemini-3-pro-preview",
-    description="Searches Google for current market data and additional research.",
+    model="gemini-2.0-flash-exp",
     instruction="""You are a market research specialist. Use Google Search to:
 1. Find current market prices and trends
 2. Locate recent news and articles
@@ -457,39 +460,34 @@ google_research_agent = Agent(
 
 Provide current, relevant market information.""",
     tools=[google_search],
+    output_key="market_data"
 )
 
-# MAIN INTEGRATED AGENT DEFINITION
-content_agent = Agent(
-    name="numismatic_storyteller",
+# =============================================================================
+# 2. DEFINE PIPELINE WORKER AGENTS (Content Creation, Verification, Polish)
+# =============================================================================
+
+# WORKER 1: Content Creation Agent
+content_creation_agent = LlmAgent(
+    name="content_creator",
     model="gemini-2.5-flash",
-    description=(
-        "AI-driven numismatic storyteller that transforms coin data into rich historical "
-        "narratives using Numista, Wikipedia, and Google Search."
-    ),
     instruction=STORYTELLING_INSTRUCTION,
     tools=[
-        # Use sub-agents as tools to avoid mixing direct functions with MCP tools
         AgentTool(numista_research_agent),
         AgentTool(wikipedia_research_agent),
         AgentTool(google_research_agent),
     ],
+    output_key="draft_narrative"
 )
 
-# --- [AGENT 2: CONTENT VERIFY AGENT] ---
-
-content_verify_agent = Agent(
+# WORKER 2: Content Verification Agent
+content_verification_agent = LlmAgent(
     name="content_verifier",
     model="gemini-2.5-flash",
-    description=(
-        "Verifies and audits the historical and technical accuracy of the "
-        "final_story produced by the content agent."
-    ),
-
     instruction="""
 You are a **Numismatic Auditor**.
 
-You will be given a completed narrative.
+You will be given a completed narrative in {draft_narrative}.
 Your task is to verify, correct, and validate the content using authoritative
 numismatic and historical sources.
 
@@ -524,28 +522,21 @@ numismatic and historical sources.
 - Do NOT mention tools explicitly in the final text
 - Output ONLY the corrected narrative
 """,
-
     tools=[
         AgentTool(numista_research_agent),
         AgentTool(wikipedia_research_agent),
     ],
+    output_key="verified_narrative"
 )
 
-
-# --- [AGENT 3: CONTENT ADJUSTMENT AGENT] ---
-
-content_adjustment_agent = Agent(
+# WORKER 3: Content Adjustment Agent
+content_adjustment_agent = LlmAgent(
     name="content_adjuster",
     model="gemini-2.5-flash",
-    description=(
-        "Final editorial agent that polishes tone, formatting, and visual "
-        "structure to produce a high-end, collector-ready publication."
-    ),
-
     instruction="""
 You are the **Final Editor and Stylist**.
 
-You will receive a fully verified narrative.
+You will receive a fully verified narrative in {verified_narrative}.
 Your responsibility is to transform it into a **premium, ready-to-publish
 collector-grade article**.
 
@@ -581,18 +572,39 @@ collector-grade article**.
    - Do NOT reference verification, tools, or previous agents
    - Output ONLY the polished narrative
 """,
+    output_key="final_narrative"
 )
 
-pipeline_agent = SequentialAgent(
-    name="numismatic_content_pipeline",
+# =============================================================================
+# 3. DEFINE THE SEQUENTIAL WORKFLOW (The Tool)
+# =============================================================================
+
+numismatic_content_pipeline = SequentialAgent(
+    name="NumismaticContentPipeline",
     sub_agents=[
-        content_agent,
-        content_verify_agent,
+        content_creation_agent,
+        content_verification_agent,
         content_adjustment_agent,
     ],
-    description=(
-        "A sequential pipeline agent that generates, verifies, and polishes "
-        "numismatic product narratives using specialized sub-agents."
-    ),
+    description="Use this tool to generate, verify, and polish numismatic product narratives."
 )
-root_agent = pipeline_agent
+
+# =============================================================================
+# 4. DEFINE THE TEAM AGENT (The Router/Manager)
+# =============================================================================
+
+pipeline_team = Agent(
+    name="NumismaticTeam",
+    model="gemini-2.5-flash",
+    sub_agents=[numismatic_content_pipeline],
+    instruction="""
+You are a helpful numismatic assistant.
+
+- GREETINGS: If the user says 'Hi', 'Hello', or asks how you are, respond directly and politely.
+- WORKFLOW: If the user asks about coins, requests a product description, or wants numismatic research, call the 'NumismaticContentPipeline' tool.
+- RELEVANCE: Only use 'NumismaticContentPipeline' for coin-related content creation tasks.
+- DIRECT QUERIES: If the user asks a simple question about coins that doesn't need a full narrative (like "What is a Morgan dollar?"), you can answer directly or use the pipeline.
+"""
+)
+
+root_agent = pipeline_team
