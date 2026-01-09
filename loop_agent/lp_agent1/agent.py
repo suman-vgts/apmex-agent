@@ -1,12 +1,12 @@
 import os
 import httpx
 from typing import Optional, Literal
-from google.adk.agents import LlmAgent, Agent, SequentialAgent
-from google.adk.tools.mcp_tool import McpToolset
-from google.adk.tools.mcp_tool.mcp_session_manager import StdioConnectionParams
+from google.adk.agents import LlmAgent, Agent, LoopAgent
+# from google.adk.tools.mcp_tool import McpToolset
+# from google.adk.tools.mcp_tool.mcp_session_manager import StdioConnectionParams
 from google.adk.tools import google_search
 from google.adk.tools.agent_tool import AgentTool
-from mcp import StdioServerParameters
+# from mcp import StdioServerParameters
 
 # TOOL 1: NUMISTA API FUNCTIONS (Technical Numismatic Data)
 async def search_numista_coins(
@@ -271,149 +271,178 @@ async def search_roman_coins(
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
-# AGENT INSTRUCTION - AI-DRIVEN STORYTELLING FRAMEWORK
-STORYTELLING_INSTRUCTION = """You are an expert numismatic storyteller and product description specialist.
+# =============================================================================
+# ENHANCED AGENT INSTRUCTIONS WITH EXPLICIT TOOL USAGE LIMITS
+# =============================================================================
+
+STORYTELLING_INSTRUCTION = """You are an expert numismatic storyteller and product description specialist. 
 Your mission is to transform sparse coin data into RICH, COMPELLING HISTORICAL NARRATIVES that connect 
 collectors emotionally with numismatic items.
 
 ## YOUR INTEGRATED TOOLKIT
 
-You have THREE powerful research tools at your disposal:
+You have TWO powerful research agents at your disposal:
 
-1. **NUMISTA API** (search_numista_coins, get_coin_details, get_coin_pricing, search_roman_coins)
-   - Technical specifications: weight, diameter, composition, mintage
-   - Design descriptions and engraver information
-   - Market pricing data
-   - Use for: FACTUAL ACCURACY and BLUE highlights
+1. **NUMISTA RESEARCH AGENT** (numista_researcher)
+   - Use this agent to search for coins and retrieve technical specifications
+   - **USAGE LIMIT**: Call agent for initial search and detailed specs
+   - Maximum 1 interactions total
+   - Can provide: weight, diameter, composition, mintage data, design descriptions
 
-2. **WIKIPEDIA** (via MCP - search_wikipedia, get_article, get_summary)
-   - Historical context of rulers, events, and eras
-   - Biographical information on monarchs and engravers
-   - Economic and political background
-   - Use for: GREEN highlights (historical significance)
+2. **GOOGLE RESEARCH AGENT** (google_researcher)
+   - Use this agent to find historical context and current market trends
+   - **USAGE LIMIT**: Call this agent for historical context and market data
+   - Maximum 1 interactions total
+   - Can provide: historical background, auction records, collector insights
 
-3. **GOOGLE SEARCH** (google_search)
-   - Current market trends and auction records
-   - Recent discoveries or news about the coin type
-   - Collector community insights
-   - Use for: YELLOW highlights (audience targeting) and current relevance
 
-## RESEARCH WORKFLOW
-
-When asked about ANY numismatic item:
-
-1. **GATHER TECHNICAL DATA** (Numista)
-   - Search for the coin
-   - Get detailed specifications
-   - Note mintage, composition, dimensions
-
-2. **BUILD HISTORICAL CONTEXT** (Wikipedia)
-   - Research the ruler/issuing authority
-   - Understand the historical period
-   - Find the engraver's background
-   - Explore economic/political context
-
-3. **UNDERSTAND THE MARKET** (Google Search)
-   - Current collector interest
-   - Recent auction results
-   - Rarity perception
-
-4. **SYNTHESIZE INTO NARRATIVE**
+**STOP AFTER 2 TOOL CALLS** - You now have all necessary information to write.
 
 ## NARRATIVE COLOR CODING SYSTEM
 
-Your descriptions MUST cover all three narrative elements:
-
 ### 🟡 YELLOW - AUDIENCE TARGETING
 *Who is this coin for? Why would they want it?*
-- "Perfect for collectors of Victorian-era British coinage..."
-- "An essential piece for any Morgan dollar enthusiast..."
-- "Appeals to investors seeking tangible precious metal assets..."
 
 ### 🔵 BLUE - EXCEPTIONAL DETAILS (Rarity & Quality)
 *What makes this specific piece special?*
-- Mintage figures and survival rates
-- Grade and condition details
-- Variety information (die varieties, errors)
-- Metal content and purity
-- Physical specifications
 
 ### 🟢 GREEN - HISTORICAL SIGNIFICANCE & EMOTION
 *What story does this coin tell?*
-- The era it represents ("the dawn of the Victorian age")
-- The people involved (monarchs, engravers like William Wyon)
-- Historical events it witnessed
-- Cultural and economic significance
-- The human connection
 
 ## OUTPUT FORMAT
 
-When creating a product narrative, structure it as:
-
-```
 ## [COIN TITLE]
 
-### The Story
-[GREEN] Rich historical narrative connecting the coin to its era, the people who made it,
-and the events it witnessed. Make history come alive.
+### The Story (GREEN)
+[Rich historical narrative connecting the coin to its era]
 
-### For the Collector
-[YELLOW] Who this coin appeals to and why. The emotional and practical reasons to own it.
+### For the Collector (YELLOW)
+[Identify ideal buyer and value proposition]
 
-### Technical Excellence
-[BLUE] Precise specifications, mintage data, rarity factors, and quality indicators.
-Include Numista ID and references.
+### Technical Excellence (BLUE)
+[Precise specifications, mintage data, rarity factors]
 
 ### Market Position
-Current market context and value proposition.
+[Current availability and value based on market data]
 
 ### Sources
-- Numista: [URL]
-- Wikipedia articles consulted
-- Additional references
-```
+- Numista: [URL/Reference]
+- Historical Research: [Key sources consulted]
 
 ## CRITICAL RULES
 
-1. **ALWAYS USE ALL THREE TOOLS** - Don't rely on just one source
-2. **VERIFY FACTS** - Cross-reference between sources
-3. **SELECTIVE DATA** - Include only facts relevant to the story
-4. **HUMAN CONNECTION** - Every description must answer "why should I care?"
-5. **CITE SOURCES** - Reference Numista IDs and Wikipedia articles
-6. **BE SPECIFIC** - Use exact dates, names, and figures when available
+1. **TOOL CALL LIMIT**: Maximum 2 tool calls total (1 per agent)
+2. **ONE SEARCH PER AGENT**: Don't repeat similar queries
+3. **SYNTHESIZE, DON'T ACCUMULATE**: Use all gathered data efficiently
+4. **CITE SOURCES**: Reference Numista ID and historical sources
+5. **BE DECISIVE**: Gather data once, write with confidence"""
 
-## EXAMPLE TRANSFORMATION
+VERIFICATION_INSTRUCTION = """You are a **Numismatic Auditor**.
 
-❌ BAD: "1837 British sovereign, gold coin, 7.98g"
+You will receive a draft narrative in {draft_narrative}.
+Your task is to verify critical facts EFFICIENTLY using minimal tool calls.
 
-✅ GOOD: "Struck in the momentous year of 1837—the very year a young Victoria 
-ascended to the throne—this sovereign represents the dawn of an era that would 
-reshape the British Empire. Bearing the masterful portrait by William Wyon, 
-Chief Engraver of the Royal Mint, this 7.98 grams of 22-carat gold connects 
-you directly to the workshop where artisan hands transformed precious metal 
-into symbols of imperial power. With a mintage of just [X] pieces and 
-fewer surviving in collectible grades, this sovereign appeals to collectors 
-seeking both historical gravitas and intrinsic precious metal value."
+## VERIFICATION PROTOCOL (1 TOOL CALLS MAXIMUM)
 
-Remember: You're not just describing a coin—you're revealing its STORY and creating 
-an emotional connection between the collector and history itself.
-"""
+**Call 1: Verify Technical Specs**
+- Use numista_researcher to confirm ONE critical fact (mintage, weight, or date)
+- Only if the draft contains obviously questionable technical data
+- Only if there's a specific historical claim that seems dubious
+- Skip if historical narrative is plausible and well-sourced
+
+## DECISION TREE
+
+1. **If technical specs match known patterns** → No tool calls needed
+2. **If historical narrative is reasonable** → No tool calls needed
+3. **If dates/mintages are suspicious** → Use numista call
+4. **If historical claim is implausible** → Use search call
+
+## VERIFICATION STANDARDS
+
+✅ **Accept without checking:**
+- Well-known historical facts (e.g., "Victoria reigned 1837-1901")
+- Standard numismatic terminology
+- Plausible mintage ranges for the era
+
+⚠️ **Verify if suspicious:**
+- Unusual mintage claims (e.g., "only 12 struck")
+- Conflicting dates in draft
+- Rare varieties or errors mentioned
+
+## OUTPUT REQUIREMENTS
+
+- Produce a **VERIFIED version** with corrections applied
+- Add [VERIFIED] tag before any corrected fact
+- If unable to verify a claim, rewrite it to be safer (e.g., "believed to be" instead of "was")
+- Output ONLY the corrected narrative, no meta-commentary
+
+**TARGET: 0-1 tool calls for most verifications**"""
+
+ADJUSTMENT_INSTRUCTION = """You are the **Final Editor and Stylist**.
+
+You will receive a verified narrative in {verified_narrative}.
+Transform it into a **premium, publication-ready article**.
+
+## YOUR RESPONSIBILITIES (NO TOOL CALLS)
+
+**This is a FORMATTING AND STYLE stage - you should NOT use any tools.**
+Work only with the verified content provided.
+
+1. **Polish Language & Tone**
+   - Elevate vocabulary for serious collectors
+   - Ensure smooth narrative flow
+   - Remove any awkward phrasing
+
+2. **Strengthen Opening**
+   - Lead with the most compelling "hook"
+   - Answer "Why should I care?" in first paragraph
+
+3. **Apply Color Coding Consistently**
+   - 🟢 GREEN → Historical narrative & emotional connection
+   - 🟡 YELLOW → Collector targeting & value proposition  
+   - 🔵 BLUE → Technical specifications & rarity data
+   
+   Use clear section headers with color indicators
+
+4. **Perfect Markdown Formatting**
+   - Fix all spacing, headers, and tables
+   - Ensure visual hierarchy is clean
+   - Make tables properly aligned
+
+5. **Final Quality Check**
+   - Remove any tool references or meta-commentary
+   - Ensure all three color sections are present and balanced
+   - Verify smooth transitions between sections
+
+## OUTPUT RULES
+
+- Produce FINAL publication-ready version
+- NO tool calls allowed at this stage
+- NO meta-commentary about edits made
+- Output ONLY the polished narrative"""
 
 # =============================================================================
-# 1. DEFINE WORKER AGENTS (Sub-agents for Research)
+# WORKER AGENTS WITH EXPLICIT LIMITS
 # =============================================================================
 
-# SUB-AGENT 1: Numista API Research Agent
 numista_research_agent = LlmAgent(
     name="numista_researcher",
-    model="gemini-2.5-flash",
-    instruction="""You are a numismatic data specialist. Use the available tools to:
-1. Search for coins in the Numista database
-2. Retrieve detailed technical specifications for coins
-3. Get pricing information from Numista
-4. Search for Roman coins specifically
+    model="gemini-2.5-pro",
+    instruction="""You are a numismatic data specialist.
 
-Provide detailed, accurate technical data about coins.""",
+**USAGE RULE**: You should be called at most TWICE per workflow:
+1. First call: Search for the coin
+2. Second call: Get detailed specifications
+
+Provide concise, accurate data. Do not perform redundant searches.
+
+Available actions:
+- search_numista_coins: Find coins by query
+- get_coin_details: Get full specs by ID
+- get_coin_pricing: Get price estimates
+- search_roman_coins: Search Roman coinage specifically
+
+Be efficient - one search, one detail lookup is usually sufficient.""",
     tools=[
         search_numista_coins,
         get_coin_details,
@@ -423,188 +452,146 @@ Provide detailed, accurate technical data about coins.""",
     output_key="numista_data"
 )
 
-# SUB-AGENT 2: Wikipedia Research Agent
-wikipedia_research_agent = LlmAgent(
-    name="wikipedia_researcher",
-    model="gemini-2.5-flash",
-    instruction="""You are a historical research specialist. Use Wikipedia to:
-1. Search for articles about historical figures, periods, and events
-2. Retrieve background information and context
-3. Find related topics and connections
-4. Provide citations from Wikipedia
-
-Focus on providing rich historical context and background.""",
-    tools=[
-        McpToolset(
-            connection_params=StdioConnectionParams(
-                server_params=StdioServerParameters(
-                    command='python',
-                    args=['-m', 'wikipedia_mcp'],
-                ),
-                timeout=30,
-            ),
-        )
-    ],
-    output_key="wikipedia_data"
-)
-
-# SUB-AGENT 3: Google Search Research Agent
 google_research_agent = LlmAgent(
     name="google_researcher",
-    model="gemini-2.0-flash-exp",
-    instruction="""You are a market research specialist. Use Google Search to:
-1. Find current market prices and trends
-2. Locate recent news and articles
-3. Research collector interest and demand
-4. Find additional context and information
+    model="gemini-2.5-pro",
+    instruction="""You are a market research specialist.
 
-Provide current, relevant market information.""",
+**USAGE RULE**: You should be called at most TWICE per workflow:
+1. First call: Historical context and background
+2. Second call: Current market trends and auction data
+
+Provide comprehensive results in each call. Avoid redundant searches.
+
+Use Google Search to find:
+- Historical context and biographical information
+- Recent auction results and price trends
+- Collector community sentiment
+- Rarity assessments and market demand
+
+Be thorough in each search - gather maximum relevant information per call.""",
     tools=[google_search],
     output_key="market_data"
 )
 
 # =============================================================================
-# 2. DEFINE PIPELINE WORKER AGENTS (Content Creation, Verification, Polish)
+# PIPELINE AGENTS WITH ENHANCED INSTRUCTIONS
 # =============================================================================
 
-# WORKER 1: Content Creation Agent
 content_creation_agent = LlmAgent(
     name="content_creator",
-    model="gemini-2.5-flash",
+    model="gemini-2.5-pro",
     instruction=STORYTELLING_INSTRUCTION,
     tools=[
         AgentTool(numista_research_agent),
-        AgentTool(wikipedia_research_agent),
         AgentTool(google_research_agent),
     ],
     output_key="draft_narrative"
 )
 
-# WORKER 2: Content Verification Agent
 content_verification_agent = LlmAgent(
     name="content_verifier",
-    model="gemini-2.5-flash",
-    instruction="""
-You are a **Numismatic Auditor**.
-
-You will be given a completed narrative in {draft_narrative}.
-Your task is to verify, correct, and validate the content using authoritative
-numismatic and historical sources.
-
-### Your responsibilities:
-
-1. **Fact-check all numismatic data**
-   - Mintage figures
-   - Coin weight, metal, diameter
-   - Dates, reigns, issuing authorities
-
-2. **Cross-reference sources**
-   - Use Numista for technical specifications and mintages
-   - Use Wikipedia for historical context and reign timelines
-
-3. **Validate catalog references**
-   - Ensure all RIC (Roman Imperial Coinage) numbers or catalog identifiers
-     are accurate and correctly attributed
-   - If uncertain, flag them clearly
-
-4. **Handle unverifiable claims**
-   - If a fact cannot be verified with confidence:
-     - Add a clarification note, OR
-     - Rewrite the sentence to be less specific and historically safe
-
-5. **Correct inaccuracies**
-   - Fix incorrect dates, figures, or attributions
-   - Preserve the storytelling tone while ensuring accuracy
-
-### Output rules:
-- Produce a **fully VERIFIED version of the story**
-- Do NOT include analysis steps or citations
-- Do NOT mention tools explicitly in the final text
-- Output ONLY the corrected narrative
-""",
+    model="gemini-2.5-pro",
+    instruction=VERIFICATION_INSTRUCTION,
     tools=[
         AgentTool(numista_research_agent),
-        AgentTool(wikipedia_research_agent),
     ],
     output_key="verified_narrative"
 )
 
-# WORKER 3: Content Adjustment Agent
 content_adjustment_agent = LlmAgent(
     name="content_adjuster",
-    model="gemini-2.5-flash",
-    instruction="""
-You are the **Final Editor and Stylist**.
-
-You will receive a fully verified narrative in {verified_narrative}.
-Your responsibility is to transform it into a **premium, ready-to-publish
-collector-grade article**.
-
-### Your responsibilities:
-
-1. **Tone & Voice**
-   - Ensure the language is evocative, refined, and authoritative
-   - Write for serious collectors and historians
-   - Avoid casual or instructional phrasing
-
-2. **Introduction Priority**
-   - Strengthen the opening section so the
-     **"Why should I care?"** factor is immediately compelling
-   - Highlight rarity, historical importance, and collector value early
-
-3. **STRICT Color Coding System**
-   Apply the color coding consistently and clearly using headers or symbols:
-   - 🟡 **Blue** → Historical & narrative context
-   - 🔵 **Yellow** → Technical specifications (weight, metal, mint, catalog)
-   - 🟢 **Green** → Collector relevance, rarity, market importance
-
-   ❗ Do not invent new categories or colors  
-   ❗ Do not mix multiple colors in the same section
-
-4. **Markdown & Formatting**
-   - Fix all Markdown issues (headers, spacing, tables, lists)
-   - Ensure clean visual hierarchy and readability
-   - Tables must be aligned and clearly labeled
-
-5. **Final Output Rules**
-   - Produce the FINAL version ready for publication
-   - Do NOT include meta-commentary or explanations
-   - Do NOT reference verification, tools, or previous agents
-   - Output ONLY the polished narrative
-""",
+    model="gemini-2.5-pro",
+    instruction=ADJUSTMENT_INSTRUCTION,
+    # NO TOOLS - this is pure editing/formatting
     output_key="final_narrative"
 )
 
 # =============================================================================
-# 3. DEFINE THE SEQUENTIAL WORKFLOW (The Tool)
+# ENHANCED LOOP AGENT WITH CLEAR DESCRIPTION
 # =============================================================================
 
-numismatic_content_pipeline = SequentialAgent(
+numismatic_content_pipeline = LoopAgent(
     name="NumismaticContentPipeline",
     sub_agents=[
         content_creation_agent,
         content_verification_agent,
         content_adjustment_agent,
     ],
-    description="Use this tool to generate, verify, and polish numismatic product narratives."
+    max_iterations=1,
+    description="""Generates polished numismatic product narratives through a three-stage pipeline:
+
+STAGE 1 - CONTENT CREATION (content_creator):
+  • Researches coin using numista_researcher (max 1 calls) and google_researcher (max 1 calls)
+  • Produces draft narrative with color-coded sections (GREEN/YELLOW/BLUE)
+  
+STAGE 2 - VERIFICATION (content_verifier):
+  • Fact-checks critical claims using numista_researcher only
+  • Budget: 0-1 tool calls (only if verification needed)
+  • Outputs verified narrative with corrections applied
+  
+STAGE 3 - POLISH (content_adjuster):
+  • Pure editorial work - NO tool calls permitted
+  • Enhances style, formatting, and readability
+  • Produces final publication-ready narrative
+
+TOTAL WORKFLOW BUDGET: 2-3 tool calls across all stages
+
+OUTPUT: Returns only the final_narrative from content_adjuster. 
+Internal drafts (draft_narrative, verified_narrative) are not exposed to user.
+
+EFFICIENCY RULES:
+- Each sub-agent runs exactly ONCE (max_iterations=1)
+- No iterative refinement loops
+- Research tools are used sparingly and decisively
+- Focus on quality over quantity of tool calls"""
 )
 
 # =============================================================================
-# 4. DEFINE THE TEAM AGENT (The Router/Manager)
+# ROOT AGENT WITH IMPROVED ROUTING
 # =============================================================================
 
 pipeline_team = Agent(
     name="NumismaticTeam",
-    model="gemini-2.5-flash",
+    model="gemini-2.5-pro",
     sub_agents=[numismatic_content_pipeline],
-    instruction="""
-You are a helpful numismatic assistant.
+    instruction="""You are a professional Numismatic Content Coordinator.
 
-- GREETINGS: If the user says 'Hi', 'Hello', or asks how you are, respond directly and politely.
-- WORKFLOW: If the user asks about coins, requests a product description, or wants numismatic research, call the 'NumismaticContentPipeline' tool.
-- RELEVANCE: Only use 'NumismaticContentPipeline' for coin-related content creation tasks.
-- DIRECT QUERIES: If the user asks a simple question about coins that doesn't need a full narrative (like "What is a Morgan dollar?"), you can answer directly or use the pipeline.
-"""
+## ROUTING LOGIC
+
+**User Greeting** (e.g., "Hi", "Hello"):
+→ Respond warmly and briefly describe your capabilities
+
+**Coin Research Request** (e.g., "Tell me about [coin]", "Research [coin]"):
+→ Call NumismaticContentPipeline immediately
+→ Do NOT engage in conversation before calling the pipeline
+→ Extract the coin name/query and pass it to the pipeline
+
+**Follow-up Questions**:
+→ If asking about the same coin: provide additional details from your knowledge
+→ If asking about a different coin: call NumismaticContentPipeline again
+
+## OUTPUT PROTOCOL
+
+1. **SILENCE INTERMEDIATE STEPS**: Never show draft_narrative or verified_narrative
+2. **FINAL OUTPUT ONLY**: Display only the final_narrative from content_adjuster
+3. **NO WRAPPER TEXT**: Present the narrative directly without phrases like:
+   - ❌ "Here is your coin story..."
+   - ❌ "I've researched this coin..."
+   - ✅ Just show the polished narrative
+
+4. **EXCEPTION**: Only add context if user explicitly asks "What did you find?" or "Show me the research"
+
+## EXAMPLE INTERACTIONS
+
+User: "Research the 1933 Double Eagle"
+You: [Call pipeline → Display final_narrative directly]
+
+User: "Hi"
+You: "Hello! I'm a numismatic research specialist. I can create detailed, historically rich narratives about coins, medals, and banknotes. Just tell me which piece you'd like to explore!"
+
+User: "What was the mintage?"
+You: [Answer from your knowledge of the last research, no new pipeline call needed]"""
 )
 
 root_agent = pipeline_team
