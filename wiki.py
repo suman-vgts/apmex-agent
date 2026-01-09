@@ -7,13 +7,7 @@ import os
 import asyncio
 import httpx
 from typing import Optional, Literal, Dict, Any, List
-from google.adk.agents import LlmAgent, Agent, SequentialAgent
-from google.adk.tools.mcp_tool import McpToolset
-from google.adk.tools.mcp_tool.mcp_session_manager import StdioConnectionParams
-from google.adk.tools import google_search
-from google.adk.tools.agent_tool import AgentTool
-from mcp import StdioServerParameters
-
+from google.adk.agents import LlmAgent, Agent
 # Import Wikipedia library
 try:
     import wikipedia
@@ -586,275 +580,31 @@ async def get_wikipedia_historical_context(
         }
 
 
-# =============================================================================
-# NUMISTA API TOOLS (from your example)
-# =============================================================================
+NUMISMATIC_AGENT_INSTRUCTION = """You are a numismatic historical specialist. Your goal is to provide deep historical and technical insights using Wikipedia.
 
-async def search_numista_coins(
-    query: str,
-    country: Optional[str] = None,
-    category: Literal["coin", "banknote", "exonumia"] = "coin",
-    min_year: Optional[int] = None,
-    max_year: Optional[int] = None
-) -> dict:
-    """
-    Search the Numista database for coins, medals, or banknotes.
-    
-    Use this tool to find technical specifications, mintage data, and catalog
-    information for numismatic items. Essential for accurate product details.
-    
-    Args:
-        query: Search term (e.g., "Victoria sovereign", "Morgan dollar", "Mughal mohur")
-        country: Optional issuing country filter (e.g., "united-kingdom", "united-states")
-        category: Type of item - "coin", "banknote", or "exonumia"
-        min_year: Optional minimum year filter
-        max_year: Optional maximum year filter
-    
-    Returns:
-        dict: Coin data including IDs for detailed lookup, or error message
-    """
-    api_key = os.getenv("NUMISTA_API_KEY")
-    if not api_key:
-        return {
-            "status": "error",
-            "message": "NUMISTA_API_KEY not configured. Get one at https://en.numista.com/api/",
-            "fallback": "Use Wikipedia for historical information instead."
-        }
-    
-    params = {
-        "q": query,
-        "lang": "en",
-        "count": 10,
-        "category": category
-    }
-    if country:
-        params["issuer"] = country
-    if min_year:
-        params["min_year"] = min_year
-    if max_year:
-        params["max_year"] = max_year
-    
-    headers = {"Numista-API-Key": api_key}
-    
-    try:
-        async with httpx.AsyncClient() as client:
-            response = await client.get(
-                "https://api.numista.com/v3/types",
-                params=params,
-                headers=headers,
-                timeout=30.0
-            )
-            response.raise_for_status()
-            data = response.json()
-            
-            coins = []
-            for item in data.get("types", [])[:5]:
-                coins.append({
-                    "numista_id": item.get("id"),
-                    "title": item.get("title"),
-                    "issuer": item.get("issuer", {}).get("name"),
-                    "period": f"{item.get('min_year', '?')} - {item.get('max_year', '?')}",
-                    "category": item.get("category"),
-                    "obverse_thumbnail": item.get("obverse", {}).get("thumbnail"),
-                    "reverse_thumbnail": item.get("reverse", {}).get("thumbnail"),
-                })
-            
-            return {
-                "status": "success",
-                "total_found": data.get("count", 0),
-                "coins": coins,
-                "note": "Use get_coin_details with numista_id for full specifications"
-            }
-    except httpx.HTTPStatusError as e:
-        return {"status": "error", "message": f"Numista API error: {e.response.status_code}"}
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
+**USAGE RULE**: You should be called at most TWICE per workflow:
+1. First call: Identify the coin (search).
+2. Second call: Retrieve comprehensive data (full details/context).
 
+Provide rich, accurate data. Do not perform redundant searches.
 
-async def get_numista_coin_details(coin_id: int) -> dict:
-    """
-    Get comprehensive technical details about a specific coin from Numista.
-    
-    Use this after searching to get complete specifications needed for
-    accurate product descriptions: metal content, weight, dimensions,
-    mintage figures, engraver information, and design descriptions.
-    
-    Args:
-        coin_id: The Numista coin ID obtained from search results
-    
-    Returns:
-        dict: Complete technical specifications and catalog data
-    """
-    api_key = os.getenv("NUMISTA_API_KEY")
-    if not api_key:
-        return {"status": "error", "message": "NUMISTA_API_KEY not configured"}
-    
-    headers = {"Numista-API-Key": api_key}
-    
-    try:
-        async with httpx.AsyncClient() as client:
-            response = await client.get(
-                f"https://api.numista.com/v3/types/{coin_id}",
-                headers=headers,
-                timeout=30.0
-            )
-            response.raise_for_status()
-            data = response.json()
-            
-            # Extract engraver information if available
-            engravers = []
-            if data.get("obverse", {}).get("engravers"):
-                engravers.extend([e.get("name") for e in data["obverse"]["engravers"]])
-            if data.get("reverse", {}).get("engravers"):
-                engravers.extend([e.get("name") for e in data["reverse"]["engravers"]])
-            
-            return {
-                "status": "success",
-                "technical_data": {
-                    "title": data.get("title"),
-                    "issuer": data.get("issuer", {}).get("name"),
-                    "ruler": data.get("ruler", {}).get("name") if data.get("ruler") else None,
-                    "period": f"{data.get('min_year', '?')} - {data.get('max_year', '?')}",
-                    "denomination": data.get("value", {}).get("text"),
-                    "currency": data.get("value", {}).get("currency", {}).get("name"),
-                },
-                "physical_specifications": {
-                    "composition": data.get("composition", {}).get("text"),
-                    "weight_grams": data.get("weight"),
-                    "diameter_mm": data.get("diameter"),
-                    "thickness_mm": data.get("thickness"),
-                    "shape": data.get("shape"),
-                    "orientation": data.get("orientation"),
-                },
-                "design_details": {
-                    "obverse_description": data.get("obverse", {}).get("description"),
-                    "obverse_lettering": data.get("obverse", {}).get("lettering"),
-                    "reverse_description": data.get("reverse", {}).get("description"),
-                    "reverse_lettering": data.get("reverse", {}).get("lettering"),
-                    "edge_description": data.get("edge", {}).get("description"),
-                    "engravers": list(set(engravers)) if engravers else None,
-                },
-                "rarity_data": {
-                    "mintage": data.get("mintage"),
-                    "mints": [m.get("name") for m in data.get("mints", [])] if data.get("mints") else None,
-                },
-                "references": data.get("references", []),
-                "numista_url": f"https://en.numista.com/catalogue/pieces{coin_id}.html"
-            }
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
+Available actions:
+- search_wikipedia_coins: Find coins and numismatic topics by query.
+- get_wikipedia_coin_summary: Get a brief 3-5 sentence overview.
+- get_wikipedia_coin_full_details: Get complete article content, specs, and references.
+- get_wikipedia_coin_images: Retrieve image URLs for visual reference.
+- get_wikipedia_related_coins: Find similar or related coin families.
+- compare_wikipedia_coins: Side-by-side comparison of two coins.
+- get_wikipedia_coins_by_country: Search for regional or national currency sets.
+- get_wikipedia_historical_context: Research the rulers, eras, or engravers.
 
+Be efficient—one search and one detail lookup is usually sufficient. Always cite Wikipedia URLs."""
 
-# =============================================================================
-# AGENT DEFINITIONS
-# =============================================================================
-
-NUMISMATIC_AGENT_INSTRUCTION = """You are an expert numismatic storyteller and research assistant.
-
-You have access to multiple powerful research tools:
-
-## WIKIPEDIA TOOLS (Historical Context & Background)
-
-1. **search_wikipedia_coins** - Search for coins and numismatic topics
-   - Use when you don't know the exact page title
-   - Returns list of matching Wikipedia pages
-
-2. **get_wikipedia_coin_summary** - Get brief summaries (3-5 sentences)
-   - Quick overviews of coins
-   - Historical context in brief
-
-3. **get_wikipedia_coin_full_details** - Complete information
-   - Full article content
-   - Images, references, related topics
-   - Use for comprehensive research
-
-4. **get_wikipedia_coin_images** - Get coin images
-   - Visual references
-   - Multiple image URLs
-
-5. **get_wikipedia_related_coins** - Find similar coins
-   - Discover related numismatic topics
-   - Build coin families
-
-6. **compare_wikipedia_coins** - Compare two coins
-   - Side-by-side summaries
-   - Highlight differences
-
-7. **get_wikipedia_coins_by_country** - Country-specific coins
-   - National currency information
-   - Regional coinage
-
-8. **get_wikipedia_historical_context** - Research rulers and periods
-   - Historical figures (monarchs, engravers)
-   - Time periods and eras
-   - Essential for GREEN (historical significance) content
-
-## NUMISTA TOOLS (Technical Specifications)
-
-1. **search_numista_coins** - Search for technical data
-2. **get_numista_coin_details** - Complete specifications
-   - Weight, diameter, composition
-   - Mintage figures
-   - Design descriptions
-
-## RESEARCH WORKFLOW
-
-When asked about a coin:
-
-1. **Start with Wikipedia** to understand the historical context
-   - Search for the coin type
-   - Get summary and full details
-   - Research the ruler/engraver for context
-
-2. **Use Numista** for technical specifications
-   - Search for exact coin
-   - Get detailed specifications
-   - Note mintage and rarity
-
-3. **Cross-reference** both sources
-   - Wikipedia: Historical narrative (GREEN)
-   - Numista: Technical accuracy (BLUE)
-
-4. **Build your narrative** with:
-   - 🟢 GREEN: Historical significance from Wikipedia
-   - 🔵 BLUE: Technical details from Numista
-   - 🟡 YELLOW: Collector appeal (synthesized from both)
-
-## TOOL USAGE TIPS
-
-- **Always use Wikipedia** for:
-  * Historical context
-  * Biographical information
-  * Period background
-  * Cultural significance
-
-- **Always use Numista** for:
-  * Exact specifications
-  * Mintage numbers
-  * Catalog references
-  * Physical dimensions
-
-- **Handle errors gracefully**:
-  * If disambiguation occurs, pick the most relevant option
-  * If page not found, try alternative search terms
-  * Cross-reference between sources
-
-## OUTPUT STYLE
-
-Create rich, compelling narratives that:
-1. Connect coins to their historical moment
-2. Highlight human stories (rulers, engravers, collectors)
-3. Provide precise technical data
-4. Appeal to collectors emotionally and intellectually
-
-Always cite your sources and provide Wikipedia URLs and Numista IDs.
-"""
-
-# Main Numismatic Research Agent
-numismatic_research_agent = Agent(
-    name="numismatic_researcher",
-    model="gemini-2.0-flash-exp",
-    description="Expert numismatic researcher with Wikipedia and Numista integration",
+# Main Wikipedia Research Agent
+wikipedia_research_agent = Agent(
+    name="wikipedia_researcher",
+    model="gemini-2.5-pro",
+    description="Expert numismatic researcher with Wikipedia integration",
     instruction=NUMISMATIC_AGENT_INSTRUCTION,
     tools=[
         # Wikipedia Tools
@@ -866,121 +616,5 @@ numismatic_research_agent = Agent(
         compare_wikipedia_coins,
         get_wikipedia_coins_by_country,
         get_wikipedia_historical_context,
-        # Numista Tools
-        search_numista_coins,
-        get_numista_coin_details,
     ],
 )
-
-# Content Creation Agent (uses research agent)
-content_creation_agent = Agent(
-    name="content_creator",
-    model="gemini-2.0-flash-exp",
-    description="Creates compelling numismatic product descriptions",
-    instruction="""You are a numismatic content specialist.
-
-Use the numismatic_researcher agent to gather information, then create
-compelling, collector-grade product descriptions.
-
-Your descriptions should:
-1. Start with a captivating historical hook
-2. Include precise technical specifications
-3. Highlight rarity and collector value
-4. Tell the human story behind the coin
-5. Appeal to collectors' emotions and intellect
-
-Structure your narratives with:
-- 🟢 GREEN: Historical significance and context
-- 🔵 BLUE: Technical specifications and rarity
-- 🟡 YELLOW: Collector appeal and market position
-
-Always cite Wikipedia and Numista sources.
-""",
-    tools=[
-        AgentTool(numismatic_research_agent),
-        google_search,
-    ],
-)
-
-
-# =============================================================================
-# MAIN EXECUTION
-# =============================================================================
-
-async def main():
-    """Main execution function"""
-    
-    print("=" * 80)
-    print("NUMISMATIC AGENT WITH WIKIPEDIA INTEGRATION")
-    print("=" * 80)
-    print()
-    
-    # Test queries
-    test_queries = [
-        "Tell me about the 1837 British sovereign",
-        "Compare the Morgan dollar and Peace dollar",
-        "What Roman coins featured emperor Hadrian?",
-        "Research coins from ancient India",
-    ]
-    
-    print("Available test queries:")
-    for i, query in enumerate(test_queries, 1):
-        print(f"{i}. {query}")
-    
-    print("\n" + "=" * 80)
-    print("Testing Wikipedia tools directly:")
-    print("=" * 80 + "\n")
-    
-    # Test 1: Search
-    print("1. Searching for 'silver eagle'...")
-    result = await search_wikipedia_coins("silver eagle")
-    if result['success']:
-        print(f"   Found {result['count']} results:")
-        for r in result['results'][:3]:
-            print(f"   - {r}")
-    print()
-    
-    # Test 2: Get summary
-    print("2. Getting summary of 'American Silver Eagle'...")
-    result = await get_wikipedia_coin_summary("American Silver Eagle", sentences=2)
-    if result['success']:
-        print(f"   {result['summary'][:200]}...")
-    print()
-    
-    # Test 3: Historical context
-    print("3. Getting historical context for 'Queen Victoria'...")
-    result = await get_wikipedia_historical_context("Queen Victoria", sentences=3)
-    if result['success']:
-        print(f"   {result['summary'][:200]}...")
-        print(f"   URL: {result['url']}")
-    print()
-    
-    print("=" * 80)
-    print("Wikipedia tools are ready for ADK agent integration!")
-    print("=" * 80)
-    print()
-    print("To use with your agent:")
-    print("1. Set NUMISTA_API_KEY environment variable")
-    print("2. Run: python numismatic_agent_with_wikipedia.py")
-    print("3. The agent will use Wikipedia + Numista + Google Search")
-
-
-if __name__ == "__main__":
-    # Run the test
-    asyncio.run(main())
-    
-    print("\n" + "=" * 80)
-    print("AGENT CONFIGURATION COMPLETE")
-    print("=" * 80)
-    print("\nTo use the agent in your code:")
-    print("""
-    from numismatic_agent_with_wikipedia import numismatic_research_agent, content_creation_agent
-    
-    # Use the research agent directly
-    response = numismatic_research_agent.run("Tell me about the Morgan dollar")
-    
-    # Or use the content creation agent (which uses research agent)
-    response = content_creation_agent.run("Create a description for a 1921 Morgan dollar")
-    """)
-    print("\nYour root agent would be:")
-    print("root_agent = content_creation_agent")
